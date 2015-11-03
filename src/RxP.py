@@ -29,6 +29,3 @@ class RxP(Object):
 
     def listen(self, port):
     	pass
-
-    def terminate(self):
-    	pass
