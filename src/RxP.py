@@ -8,7 +8,7 @@ import math
 class RxP(Object):
     def __init__(self):
         pass
-
+        
     def _create_socket():
     	pass
 
@@ -29,3 +29,9 @@ class RxP(Object):
 
     def listen(self, port):
     	pass
+
+"""
+A Connection object: equivalent to UNIX socket, but 
+with functionality that fits RxP
+"""
+class Connection(Object):
