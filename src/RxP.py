@@ -5,30 +5,25 @@ import random
 import string
 import math
 
-class RxP(Object):
-    def __init__(self):
-        pass
-        
-    def _create_socket():
-    	pass
+"""
+Attemps to connect to the server located at address.
+Params: address -- a tuple: (ip_address, port_number)
+Returns: A Connection to this server, or None if it cannot connect.
+"""
+def connect(address):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    def connect(self, address):
-    	pass
+"""
 
-    def disconnect(self):
-    	pass
+"""
+def listen(port):
+    pass
 
-    def send(self, data):
-    	pass
+"""
 
-    def recv(self, data):
-    	pass
-
-    def setWindow(self, winSize):
-    	pass
-
-    def listen(self, port):
-    	pass
+"""
+def accept():
+    pass
 
 """
 A Connection object: equivalent to UNIX socket, but 
