@@ -5,6 +5,9 @@ import string
 import math
 import time
 
+#Implementation constants
+
+#Endpoint types
 CLIENT = 0
 SERVER = 1
 MAX_PAYLOAD = 498
@@ -76,8 +79,10 @@ A Connection object: equivalent to UNIX socket, but
 with functionality that fits RxP
 """
 class Connection(object):
-    def __init__(self, sock, p_type, other_addr = ""):
+    def __init__(self, sock, c_type, other_addr = ""):
         self.last_sent = 0
+        self.win_size = 4
+
     """
     Returns True for good handshake, False for bad
     """
@@ -86,13 +91,37 @@ class Connection(object):
 
     def _client_handshake(self):
         self._send(SYN)
+        #TODO
 
+    """
+    Reliably sends a message across the connection.
+    Will retry MAX_RETRIES times before reporting failure.
+    Params: message -- The message to send.
+    Returns: True if the message was successfully sent, False otherwise.
+    """
     def send(self, message):
         pass
 
+    """
+    Sets the receiving window to the specified size (in packets).
+    Params: win_size -- an int specifying how large to make the receiving buffer.
+    """
+    def setWindow(self, win_size):
+        self.win_size = win_size
+
+    """
+    Allows the user to get the current size of the receiving buffer.
+    Returns: an int describing the length of the receiving buffer (in packets).
+    """
+    def getWindow(self):
+        return self.win_size
+
+    """
+    Internal method for sending non-data packets
+    """
     def _send(self, p_type):
         packet = _packetize(p_type)
-        #Error checking and retries and other stuff
+        #TODO: Error checking and retries and other stuff
         self.sock.send(packet)
 
     def _packetize(self, p_type, data = ""):
@@ -131,13 +160,21 @@ class Connection(object):
                 header += '0'*(field[1] - len(bin_field)) + bin_field
             header = hex(int(header,2))[2:0]
             packet = header + payload[i]
-            _checksum(packet)
+            packet = _checksum(packet)
 
+    """
+    Generates the checksum for a packet. Then edits the packet
+    to include the checksum in the correct field.
+    Params: packet -- the packet to calculate the checksum for
+    Returns: The same packet with an updated checksum
+    """
     def _checksum(self, packet):
+        #Split packet into 4-byte words
         words = list((packet[0+i:(4)+i] for i in range(0, len(packet), 4)))
         words = [int(i, 16) for i in words]
         total = sum(words)
         total = bin(total)[2:]
+        #Add words together. If too long, carry
         if len(total) > 16:
             total = '0'*(32-len(total)) + total
             hi = total[:16]
@@ -148,4 +185,75 @@ class Connection(object):
             total = bin(total)[2:]
         total = '0'*(16-len(total)) + total
         checksum = ''.join('1' if x == '0' else '0' for x in total)
-        return checksum #change
+        #Convert to hex
+        checksum = hex(int(checksum,2))[2:]
+        checksum = '0'*(4-len(checksum)) + checksum
+        #Edit packet to have new checksum
+        packet = packet[:40] + checksum + packet[44:]
+        return packet
+
+"""
+An inner class to help define packets.
+"""
+class _Packet(object):
+    def __init__(self):
+        self.src_ip = ''
+        self.src_port = 0
+        self.dest_ip = ''
+        self.dest_port = 0
+        self.seq = 0
+        self.num_seg = 0
+        self.check = 0
+        self.win_size = 0
+        self.pay_size = 0
+        self.flg = 0
+        self.payload = bytearray(486)
+
+    def __repr__(self):
+        packet = ''
+        #src IP
+        ip = self.src_ip.split('.')
+        ip = [hex(int(b))[2:] for b in ip]
+        ip = ['0'*(2-len(b))+b for b in ip]
+        packet += ''.join(ip)
+
+        #src_port
+        port = hex(self.src_port)[2:]
+        packet += '0'*(4-len(port)) + port
+
+        #dest IP
+        ip = self.dest_ip.split('.')
+        ip = [hex(int(b))[2:] for b in ip]
+        ip = ['0'*(2-len(b))+b for b in ip]
+        packet += ''.join(ip)
+
+        #dest_port
+        port = hex(self.dest_port)[2:]
+        packet += '0'*(4-len(port)) + port
+
+        #seq_num
+        num = hex(self.seq)[2:]
+        packet += '0'*(8-len(num)) + num
+
+        #num_segs
+        num = hex(self.num_seg)[2:]
+        packet += '0'*(8-len(num)) + num
+
+        #checksum
+        checksum = hex(self.check)[2:]
+        packet += '0'*(4-len(checksum)) + checksum
+
+        #window size
+        win_sze = hex(self.win_size)[2:]
+        packet += '0'*(4-len(win_sze)) + win_sze
+
+        #payload size, flags, and unused bit
+        part = str(bin(self.pay_size))[2:] + str(bin(self.flg))[2:] + '0'
+        part = hex(int(part,2))[2:]
+        packet += '0'*(8-len(part)) + part
+
+        #payload
+        payload = ''.join('%02x' % b for b in self.payload)
+        packet += payload
+
+        return packet #Length is 1028 for some reason...
