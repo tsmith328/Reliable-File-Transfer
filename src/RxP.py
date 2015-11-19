@@ -10,6 +10,8 @@ import time
 #Endpoint types
 CLIENT = 0
 SERVER = 1
+
+MAX_RETRIES = 5
 MAX_PAYLOAD = 498
 
 #Packet p_types
@@ -127,40 +129,35 @@ class Connection(object):
     def _packetize(self, p_type, data = ""):
         packets = []
 
-        #segment payload
-        payload = [""]
         if len(data) > 0:
-            data = data.encode('utf-8')
-            d = ''.join(str(hex(i))[2:] for i in data)
-            payload = list((d[0+i:(MAX_PAYLOAD*2)+i] for i in range(0, len(d), MAX_PAYLOAD*2)))
+            payload = list((data[0+i:(MAX_PAYLOAD)+i] for i in range(0, len(d), MAX_PAYLOAD)))
         num_seg = len(payload)
         for i in range(num_seg):
-            #header
-            header = ""
-            fields = []
+            p = _Packet()
+            #Source IP and port
             my_ip, my_port = self.sock.getsockname()
-            my_ip = my_ip.split('.')
-            for b in my_ip:
-                fields.append((b, 1*8)) #src ip
-            fields.append((my_port, 2*8)) #src port
-            o_ip = self.other_addr[0].split('.')
-            for b in o_ip:
-                fields.append((b, 1*8)) #dest ip
-            fields.append((self.other_addr[1], 2*8)) #dest port
-            fields.append((last_sent + 1 + i, 4*8)) #seq
-            fields.append((num_seg, 4*8)) #num seg
-            fields.append((0, 2*8)) #checksum
-            fields.append((1, 2*8)) #win size
-            fields.append((len(payload[i]), 9)) #payload size
-            fields.append((p_type, 6)) #flags
-            fields.append((0, 1)) #unused
-
-            for field in fields:
-                bin_field = str(bin(int(field[0])))[2:]
-                header += '0'*(field[1] - len(bin_field)) + bin_field
-            header = hex(int(header,2))[2:0]
-            packet = header + payload[i]
+            p.src_ip = my_ip
+            p.src_port = int(my_port)
+            #Destination IP and port
+            p.dest_ip = self.other_addr[0]
+            p.dest_port = self.other_addr[1]
+            #Sequence number
+            p.seq = i + last_sent + 1
+            #Number of segments
+            p.num_seg = num_seg
+            #Window size
+            p.win_size = self.win_size
+            #Payload size
+            p.pay_size = len(payload[i])
+            #Flags
+            p.flg = p_type
+            #Payload
+            p.payload = bytearray(payload[i], 'utf-8')
+            if len(p.payload) < 486:
+                p.payload.extend([0 for x in range(486 - len(p.payload))])
             packet = _checksum(packet)
+            packets.append(packet)
+        return packets
 
     """
     Generates the checksum for a packet. Then edits the packet
@@ -170,7 +167,7 @@ class Connection(object):
     """
     def _checksum(self, packet):
         #Split packet into 4-byte words
-        words = list((packet[0+i:(4)+i] for i in range(0, len(packet), 4)))
+        words = list((str(packet)[0+i:(4)+i] for i in range(0, len(packet), 4)))
         words = [int(i, 16) for i in words]
         total = sum(words)
         total = bin(total)[2:]
@@ -185,12 +182,12 @@ class Connection(object):
             total = bin(total)[2:]
         total = '0'*(16-len(total)) + total
         checksum = ''.join('1' if x == '0' else '0' for x in total)
-        #Convert to hex
-        checksum = hex(int(checksum,2))[2:]
-        checksum = '0'*(4-len(checksum)) + checksum
         #Edit packet to have new checksum
-        packet = packet[:40] + checksum + packet[44:]
+        packet.check = int(checksum,2)
         return packet
+
+    def _validate(packet):
+        pass
 
 """
 An inner class to help define packets.
@@ -208,6 +205,9 @@ class _Packet(object):
         self.pay_size = 0
         self.flg = 0
         self.payload = bytearray(486)
+
+    def __len__(self):
+        return len(str(self))
 
     def __repr__(self):
         packet = ''
@@ -250,10 +250,10 @@ class _Packet(object):
         #payload size, flags, and unused bit
         part = str(bin(self.pay_size))[2:] + str(bin(self.flg))[2:] + '0'
         part = hex(int(part,2))[2:]
-        packet += '0'*(8-len(part)) + part
+        packet += '0'*(4-len(part)) + part
 
         #payload
         payload = ''.join('%02x' % b for b in self.payload)
         packet += payload
 
-        return packet #Length is 1028 for some reason...
+        return packet
