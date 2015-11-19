@@ -130,11 +130,17 @@ class Connection(object):
         #TODO: Error checking and retries and other stuff
         self.sock.send(packet)
 
+    """
+    Splits a data string into packets with payloads of MAX_PAYLOAD length.
+    Returns a list of packets
+    """
     def _packetize(self, p_type, data = ""):
         packets = []
 
         if len(data) > 0:
-            payload = list((data[0+i:(MAX_PAYLOAD)+i] for i in range(0, len(d), MAX_PAYLOAD)))
+            payload = list((data[0+i:(MAX_PAYLOAD)+i] for i in range(0, len(data), MAX_PAYLOAD)))
+        else:
+            payload = [""]
         num_seg = len(payload)
         for i in range(num_seg):
             p = _Packet()
@@ -244,8 +250,13 @@ class Connection(object):
         packet.check = int(checksum,2)
         return packet
 
+    """
+    Validates a packet by calculating its checksum.
+    Returns True if valid, False otherwise.
+    """
     def _validate(packet):
-        pass
+        packet = _checksum(packet)
+        return True if int(packet.check,16) == 0 else False
 
 """
 An inner class to help define packets.
