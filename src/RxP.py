@@ -95,8 +95,8 @@ class Connection(object):
 
     def _client_handshake(self):
         self._send(SYN)
+        pkt = self._recv()
 
-        pkt = self.sock.recv(26)
         #TODO
 
     """
@@ -163,58 +163,58 @@ class Connection(object):
             packets.append(packet)
         return packets
 
-        """Receive data as a list of packets
-        Params:
-            msgsize - size of message to receive
-        Returns:
-            packet_list - list of packets
-        """
-        def recv(self, msgsize):
-            if msgsize < 512:
-                return []
-            else:
-                numpackets = msgsize / 512
-                packet_list = []
-                for i in range(numpackets):
-                    packet_list.append(self._recv())
-                    self._send(ACK)
-                return packet_list
+    """Receive data as a list of packets
+    Params:
+        msgsize - size of message to receive
+    Returns:
+        packet_list - list of packets
+    """
+    def recv(self, msgsize):
+        if msgsize < 512:
+            return []
+        else:
+            numpackets = msgsize / 512
+            packet_list = []
+            for i in range(numpackets):
+                packet_list.append(self._recv())
+                self._send(ACK)
+            return packet_list
 
-        #Does not yet guarantee packet sender is the one we're receiving from
-        """Internal method to receive a packet
-        Params:
-            pkt_size - size of packet to receive (default 512)
-        Returns:
-            pkt - packet as bytes array
-        """
-        def _recv(self, pkt_size=512):
-            chunks = []
-            bytes_recd = 0
-            checksum_match = False
-            while not checksum_match:
-                while bytes_recd < pkt_size:
-                    try:
-                        chunktuple = s.recvfrom(pkt_size - bytes_recd)
-                    except socket.timeout as e:
-                        raise e
-                    if len(chunktuple) > 0:
-                        if chunktuple[0] == b'':
-                            raise RuntimeError("socket connection broken")
-                        sender = chunktuple[1]
-                        if len(chunks) > 0:
-                            #if chunks[0][1] == sender:
-                            chunks.append(chunktuple)
-                            bytes_recd += len(chunktuple[0])
-                        else:
-                            chunks.append(chunktuple)
-                            bytes_recd += len(chunktuple[0])
-                byteslist = [byte[0] for byte in chunks]
-                pkt = b''.join(byteslist)
-                checksum_match = _validate(pkt)
-                if not checksum_match:
-                    self._send(NACK)
+    #Does not yet guarantee packet sender is the one we're receiving from
+    """Internal method to receive a packet
+    Params:
+        pkt_size - size of packet to receive (default 512)
+    Returns:
+        pkt - packet as bytes array (None if socket connection broken)
+    """
+    def _recv(self, pkt_size=512):
+        chunks = []
+        bytes_recd = 0
+        checksum_match = False
+        while not checksum_match:
+            while bytes_recd < pkt_size:
+                try:
+                    chunktuple = s.recvfrom(pkt_size - bytes_recd)
+                except socket.timeout as e:
+                    raise e
+                if len(chunktuple) > 0:
+                    if chunktuple[0] == b'':
+                        return None
+                    sender = chunktuple[1]
+                    if len(chunks) > 0:
+                        #if chunks[0][1] == sender:
+                        chunks.append(chunktuple)
+                        bytes_recd += len(chunktuple[0])
+                    else:
+                        chunks.append(chunktuple)
+                        bytes_recd += len(chunktuple[0])
+            byteslist = [byte[0] for byte in chunks]
+            pkt = b''.join(byteslist)
+            checksum_match = _validate(pkt)
+            if not checksum_match:
+                self._send(NACK)
 
-            return pkt
+        return pkt
 
 
     """
