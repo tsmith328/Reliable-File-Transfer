@@ -97,9 +97,45 @@ class Connection(object):
 
     def _client_handshake(self):
         self._send(SYN)
-        pkt = self._recv()
+        eq_addr = False
+        corr_pkt = False
+        #Needs timeout
+        while not eq_addr and not corr_pkt:
+            try:
+                syn_ack_data = self._recv()
+                if syn_ack_data.src_ip == other_addr:
+                    eq_addr = True
+                pkt_type = SYN & ACK & DATA
+                if pkt_type == syn_ack_data.flags:
+                    corr_pkt = True
+                else:
+                    pass #nack
+            except socket.timeout:
+                return False
+        addr_tup = socket.getsockname(self.sock)
+        to_hash = syn_ack_data.data + str(addr_tup[0]) + str(addr_tup[1])
+        hashed = self._make_hash(to_hash)
+        #TODO-send syn+ack with hash
+        valid = False
+        while not eq_addr:
+            try:
+                success = self._recv()
+                if success.src_ip == other_addr:
+                    if success.flags == ACK:
+                        valid = True
+                        return True
+                    elif success.flags == NACK:
+                        valid = True
+                        return False
+                    else:
+                        pass #nack
+            except socket.timeout:
+                return False
 
-        #TODO
+    def _make_hash(self, to_hash):
+        m = hashlib.md5()
+        m.update(to_hash.encode('utf-8'))
+        return m.hexdigest()
 
     """
     Reliably sends a message across the connection.
@@ -177,12 +213,13 @@ class Connection(object):
     Returns:
         ret - message as bytes array encoded in hex
     """
-    def recv(self, msgsize=486):
+    def recv(self, msgsize=MAX_PAYLOAD):
+        #TODO - sequence number validation
         if msgsize < 0:
             return []
-        elif msgsize < 486:
-            msgsize = 486
-        numpackets = msgsize / 486
+        elif msgsize < MAX_PAYLOAD:
+            msgsize = MAX_PAYLOAD
+        numpackets = msgsize / MAX_PAYLOAD
         payload_list = []
         for i in range(numpackets):
             pkt = self._recv()
@@ -199,7 +236,7 @@ class Connection(object):
     Returns:
         pkt - packet as bytes array (None if socket connection broken)
     """
-    def _recv(self, pkt_size=512):
+    def _recv(self, pkt_size=PKT_SIZE):
         chunks = []
         bytes_recd = 0
         checksum_match = False
@@ -222,11 +259,11 @@ class Connection(object):
                         bytes_recd += len(chunktuple[0])
             byteslist = [byte[0] for byte in chunks]
             pkt = b''.join(byteslist)
-            checksum_match = _validate(pkt)
+            pkt_object = _Packet(pkt)
+            checksum_match = _validate(pkt_object)
             if not checksum_match:
                 self._send(NACK)
-
-        return pkt
+        return pkt_object
 
 
     """
