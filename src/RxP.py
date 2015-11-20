@@ -74,6 +74,7 @@ def accept():
     while len(connections) < 1:
         time.sleep(1)
     conn = connections.pop(0)
+    conn.other_addr = conn.sock.getpeername()
     return conn
 
 """
