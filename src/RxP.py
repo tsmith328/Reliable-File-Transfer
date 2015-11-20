@@ -173,20 +173,24 @@ class Connection(object):
     Params:
         msgsize - size of message to receive
     Returns:
-        packet_list - list of packets
+        ret - message as bytes array encoded in hex
     """
-    def recv(self, msgsize):
-        if msgsize < 512:
+    def recv(self, msgsize=486):
+        if msgsize < 0:
             return []
-        else:
-            numpackets = msgsize / 512
-            packet_list = []
-            for i in range(numpackets):
-                packet_list.append(self._recv())
-                self._send(ACK)
-            return packet_list
+        elif msgsize < 486:
+            msgsize = 486
+        numpackets = msgsize / 486
+        payload_list = []
+        for i in range(numpackets):
+            pkt = self._recv()
+            payload = pkt[26:]
+            payload_list.append(payload)
+        ret = b''.join(payload_list)
+            # self._send(ACK)
+        return ret
 
-    #Does not yet guarantee packet sender is the one we're receiving from
+
     """Internal method to receive a packet
     Params:
         pkt_size - size of packet to receive (default 512)
@@ -208,9 +212,9 @@ class Connection(object):
                         return None
                     sender = chunktuple[1]
                     if len(chunks) > 0:
-                        #if chunks[0][1] == sender:
-                        chunks.append(chunktuple)
-                        bytes_recd += len(chunktuple[0])
+                        if chunks[0][1] == sender:
+                            chunks.append(chunktuple)
+                            bytes_recd += len(chunktuple[0])
                     else:
                         chunks.append(chunktuple)
                         bytes_recd += len(chunktuple[0])
