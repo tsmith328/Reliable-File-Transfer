@@ -374,7 +374,7 @@ class _Packet(object):
         packet = bytearray(0)
         #src IP
         ip = self.src_ip.split('.')
-        ip = int(b) for b in ip]
+        ip = [int(b) for b in ip]
         packet.extend(i) for i in ip
 
         #src_port
