@@ -112,7 +112,7 @@ class Connection(object):
                     pass #nack
             except socket.timeout:
                 return False
-        addr_tup = socket.getsockname(self.sock)
+        addr_tup = self.sock.getsockname()
         to_hash = syn_ack_data.data + str(addr_tup[0]) + str(addr_tup[1])
         hashed = self._make_hash(to_hash)
         #TODO-send syn+ack with hash
