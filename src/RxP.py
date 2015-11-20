@@ -12,7 +12,8 @@ CLIENT = 0
 SERVER = 1
 
 MAX_RETRIES = 5
-MAX_PAYLOAD = 498
+MAX_PAYLOAD = 486
+PKT_SIZE = 512
 
 #Packet p_types
 ACK = 0b100000
@@ -267,21 +268,21 @@ class Connection(object):
 An inner class to help define packets.
 """
 class _Packet(object):
-    def __init__(self):
-        self.src_ip = ''
-        self.src_port = 0
-        self.dest_ip = ''
-        self.dest_port = 0
-        self.seq = 0
-        self.num_seg = 0
-        self.check = 0
-        self.win_size = 0
-        self.pay_size = 0
-        self.flg = 0
-        self.payload = bytearray(486)
+    def __init__(self, data = 512*b'\0'):
+        self.src_ip = '.'.join([int(b) for b in data[:4]])
+        self.src_port = int(data[4:5])
+        self.dest_ip = '.'.join([int(b) for b in data[5:9]])
+        self.dest_port = int(data[9:10])
+        self.seq = int(data[10:14])
+        self.num_seg = int(data[14:18])
+        self.check = int(data[18:20])
+        self.win_size = int(data[20:22])
+        self.pay_size = 2*int(data[22]) + int((data[23] & 128) >> 7)
+        self.flg = int((data[23] & 126) >> 1)
+        self.payload = bytearray([int(b) for b in data[24:]])
 
     def __len__(self):
-        return len(str(self))
+        return len(str(self)) / 2
 
     def __repr__(self):
         packet = ''
@@ -331,3 +332,51 @@ class _Packet(object):
         packet += payload
 
         return packet
+
+    """
+    Encodes the packet as a bytes object.
+    """
+    def encode(self):
+        packet = bytearray(0)
+        #src IP
+        ip = self.src_ip.split('.')
+        ip = int(b) for b in ip]
+        packet.extend(i) for i in ip
+
+        #src_port
+        packet.extend((self.src_port >> 8) & 0xff) #High byte
+        packet.extend(self.src_port & 0xff) #Low byte
+
+        #dest IP
+        ip = self.dest_ip.split('.')
+        ip = int(b) for b in ip]
+        packet.extend(i) for i in ip
+
+        #dest_port
+        packet.extend((self.dest_port >> 1) & 0xff) #High byte
+        packet.extend(self.dest_port & 0xff) #Low byte
+
+        #seq_num
+        b = [(self.seq >> i) & 0xff for i in (24,16,8,0)]
+        packet.extend(i) for i in b
+
+        #num_segs
+        b = [(self.num_seg >> i) & 0xff for i in (24,16,8,0)]
+        packet.extend(i) for i in b
+
+        #checksum
+        packet.extend((self.check >> 1) & 0xff) #High byte
+        packet.extend(self.check & 0xff) #Low byte
+
+        #window size
+        packet.extend((self.win_size >> 1) & 0xff) #High byte
+        packet.extend(self.win_size & 0xff) #Low byte
+
+        #payload size, flags, and unused bit
+        packet.extend(self.pay_size >> 1) #High byte
+        packet.extend(((self.pay_size & 1) << 7) + (self.flg << 1)) #Low byte (pay_size[1] + flg + unused)
+
+        #payload
+        packet.extend(b) for b in payload
+
+        return bytes(packet)
