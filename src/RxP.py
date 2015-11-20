@@ -116,16 +116,13 @@ class Connection(object):
         to_hash = syn_ack_data.data + str(addr_tup[0]) + str(addr_tup[1])
         hashed = self._make_hash(to_hash)
         #TODO-send syn+ack with hash
-        valid = False
-        while not eq_addr:
+        while True:
             try:
                 success = self._recv()
                 if success.src_ip == other_addr:
                     if success.flags == ACK:
-                        valid = True
                         return True
                     elif success.flags == NACK:
-                        valid = True
                         return False
                     else:
                         pass #nack
