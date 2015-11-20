@@ -105,7 +105,7 @@ class Connection(object):
                 syn_ack_data = self._recv()
                 if syn_ack_data.src_ip == other_addr:
                     eq_addr = True
-                pkt_type = SYN & ACK & DATA
+                pkt_type = SYN | ACK | DATA
                 if pkt_type == syn_ack_data.flags:
                     corr_pkt = True
                 else:
