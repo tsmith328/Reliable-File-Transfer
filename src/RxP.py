@@ -4,6 +4,7 @@ import random
 import string
 import math
 import time
+import os
 
 #Implementation constants
 
@@ -26,12 +27,15 @@ RST = 0b000001
 server_conn = None
 connections = []
 
-"""
-Attempts to connect to the server located at address.
-Params: address -- a tuple: (ip_address (str), port_number (str or int))
-Returns: A Connection to this server, or None if it cannot connect.
-"""
+
 def connect(address):
+    """
+    Attempts to connect to the server located at address.
+    Params:
+        address -- a tuple: (ip_address (str), port_number (str or int))
+    Returns:
+        A Connection to this server, or None if it cannot connect.
+    """
     try:
         port = int(port)
         address = (address[0], int(address[1]))
@@ -45,12 +49,14 @@ def connect(address):
     except socket.error:
         return None
 
-"""
-Initializes the server socket and starts listening for connections.
-Params: port -- a str or int: the port to listen for connections on
-Returns: True if the port has been initialized, False otherwise.
-"""
 def listen(port):
+    """
+    Initializes the server socket and starts listening for connections.
+    Params:
+        port -- a str or int: the port to listen for connections on
+    Returns:
+        True if the port has been initialized, False otherwise.
+    """
     try:
         port = int(port)
     except ValueError:
@@ -67,45 +73,54 @@ def listen(port):
     except socket.error:
         return False
 
-"""
-Accepts a connection from a client and starts the session.
-Returns: A Connection to the client
-"""
+
 def accept():
+    """
+    Accepts a connection from a client and starts the session.
+    Returns:
+        a Connection to the client
+    """
     while len(connections) < 1:
         time.sleep(1)
     conn = connections.pop(0)
     conn.other_addr = conn.sock.getpeername()
     return conn
 
-"""
-A Connection object: equivalent to UNIX socket, but
-with functionality that fits RxP
-"""
+
 class Connection(object):
+    """
+    A Connection object: equivalent to UNIX socket, but
+    with functionality that fits RxP
+    """
     def __init__(self, sock, c_type, other_addr = ""):
         self.last_sent = 0
         self.win_size = 4
         self.sock = sock
         self.other_addr = other_addr
 
-    """
-    Returns True for good handshake, False for bad
-    """
+
     def _handshake(self):
+        """
+        Returns True for good handshake, False for bad
+        """
         return _client_handshake() if self.p_type == CLIENT else _server_handshake()
 
     def _client_handshake(self):
+        """
+        Client handshake (see state diagram)
+        Returns:
+            bool - True for good handshake, False for bad
+        """
         self._send(SYN)
         eq_addr = False
         corr_pkt = False
-        #Needs timeout
-        while not eq_addr and not corr_pkt:
+        pkt_type = SYN | ACK | DATA
+        ctr = 0
+        while not eq_addr and not corr_pkt and ctr < MAX_RETRIES:
             try:
                 syn_ack_data = self._recv()
                 if syn_ack_data.src_ip == other_addr:
                     eq_addr = True
-                pkt_type = SYN | ACK | DATA
                 if pkt_type == syn_ack_data.flags:
                     corr_pkt = True
                 else:
@@ -114,9 +129,10 @@ class Connection(object):
                 return False
         addr_tup = self.sock.getsockname()
         to_hash = syn_ack_data.data + str(addr_tup[0]) + str(addr_tup[1])
-        hashed = self._make_hash(to_hash)
+        hashed = _make_hash(to_hash)
         #TODO-send syn+ack with hash
-        while True:
+        ctr = 0
+        while ctr < MAX_RETRIES:
             try:
                 success = self._recv()
                 if success.src_ip == other_addr:
@@ -129,47 +145,111 @@ class Connection(object):
             except socket.timeout:
                 return False
 
-    def _make_hash(self, to_hash):
+    def _server_handshake(self):
+        """
+        Server handshake (see state diagram)
+        Returns:
+            bool - True for good handshake, False for bad
+        """
+        #Assuming we have received a SYN packet from a client
+        key = self._gen_key()
+        pkt_type = SYN | ACK | DATA
+        #send syn ack data packet with key
+        corr_pkt = False
+        pkt_type = SYN | ACK
+        ctr = 0
+        while not corr_pkt and ctr < MAX_RETRIES:
+            try:
+                syn_ack = self._recv()
+                if syn_ack.flags == pkt_type:
+                    to_hash = key + syn_ack.src_ip + syn_ack.src_port
+                    serv_hash = _make_hash(to_hash)
+                    if serv_hash == syn_ack.payload:
+                        self._send(ACK) #Needs to be changed to send to specific dest?
+                        return True
+                    else:
+                        self._send(NACK)
+                        return False
+                else:
+                    self._send(NACK)
+            except socket.timeout:
+                return False
+
+
+    def _gen_key(self):
+        """
+        Generate key for server handshake
+        Returns:
+            key - random 256 byte key (cryptographically secure)
+        """
+        return os.urandom(256)
+
+    def _make_hash(to_hash):
+        """
+        Generate md5 hash
+        Params:
+            to_hash - message to hashed
+        Returns:
+            hashed - hashed Message
+        """
         m = hashlib.md5()
         m.update(to_hash.encode('utf-8'))
         return m.hexdigest()
 
-    """
-    Reliably sends a message across the connection.
-    Will retry MAX_RETRIES times before reporting failure.
-    Params: message -- The message to send.
-    Returns: True if the message was successfully sent, False otherwise.
-    """
     def send(self, message):
-        pass
+        """
+        Reliably sends a message across the connection.
+        Will retry MAX_RETRIES times before reporting failure.
+        Params:
+            message -- The message to send.
+        Returns:
+            True if the message was successfully sent, False otherwise.
+        """
+        msgsize = len(message)
+        if msgsize < 0:
+            return False
+        else:
+            packets = self._packetize(DATA, message)
+            ctr = 0
+            while ctr < win_size:
+                pass #this needs to send and receive at the same time
+            # for packet in packets:
+            #     self.sock.sendto(packet, self.other_addr)
 
-    """
-    Sets the receiving window to the specified size (in packets).
-    Params: win_size -- an int specifying how large to make the receiving buffer.
-    """
+
+
     def setWindow(self, win_size):
+        """
+        Sets the receiving window to the specified size (in packets).
+        Params:
+            win_size - an int specifying how large to make the receiving buffer.
+        """
         self.win_size = win_size
 
-    """
-    Allows the user to get the current size of the receiving buffer.
-    Returns: an int describing the length of the receiving buffer (in packets).
-    """
     def getWindow(self):
+        """
+        Allows the user to get the current size of the receiving buffer.
+        Returns:
+            an int describing the length of the receiving buffer (in packets).
+        """
         return self.win_size
 
-    """
-    Internal method for sending non-data packets
-    """
+
     def _send(self, p_type):
+        """
+        Internal method for sending non-data packets
+        """
         packet = _packetize(p_type)
-        #TODO: Error checking and retries and other stuff
+        #TODO: Support for sequence # acks, error checking, destination?
         self.sock.send(packet)
 
-    """
-    Splits a data string into packets with payloads of MAX_PAYLOAD length.
-    Returns a list of packets
-    """
+
     def _packetize(self, p_type, data = ""):
+        """
+        Splits a data string into packets with payloads of MAX_PAYLOAD length.
+        Returns:
+            a list of packets
+        """
         packets = []
 
         if len(data) > 0:
@@ -204,13 +284,14 @@ class Connection(object):
             packets.append(packet)
         return packets
 
-    """Receive data as a list of packets
-    Params:
-        msgsize - size of message to receive
-    Returns:
-        ret - message as bytes array encoded in hex
-    """
+
     def recv(self, msgsize=MAX_PAYLOAD):
+        """Receive data as a list of packets
+        Params:
+            msgsize - size of message to receive
+        Returns:
+            ret - message as bytes array encoded in hex
+        """
         #TODO - sequence number validation
         if msgsize < 0:
             return []
@@ -227,13 +308,14 @@ class Connection(object):
         return ret
 
 
-    """Internal method to receive a packet
-    Params:
-        pkt_size - size of packet to receive (default 512)
-    Returns:
-        pkt - packet as bytes array (None if socket connection broken)
-    """
+
     def _recv(self, pkt_size=PKT_SIZE):
+        """Internal method to receive a packet
+        Params:
+            pkt_size - size of packet to receive (default PKT_SIZE)
+        Returns:
+            pkt - packet as bytes array (None if socket connection broken)
+        """
         chunks = []
         bytes_recd = 0
         checksum_match = False
@@ -263,13 +345,16 @@ class Connection(object):
         return pkt_object
 
 
-    """
-    Generates the checksum for a packet. Then edits the packet
-    to include the checksum in the correct field.
-    Params: packet -- the packet to calculate the checksum for
-    Returns: The same packet with an updated checksum
-    """
+
     def _checksum(self, packet):
+        """
+        Generates the checksum for a packet. Then edits the packet
+        to include the checksum in the correct field.
+        Params:
+            packet -- the packet to calculate the checksum for
+        Returns:
+            The same packet with an updated checksum
+        """
         #Split packet into 4-byte words
         words = list((str(packet)[0+i:(4)+i] for i in range(0, len(packet), 4)))
         words = [int(i, 16) for i in words]
@@ -290,18 +375,27 @@ class Connection(object):
         packet.check = int(checksum,2)
         return packet
 
-    """
-    Validates a packet by calculating its checksum.
-    Returns True if valid, False otherwise.
-    """
+
     def _validate(packet):
+        """
+        Validates a packet by calculating its checksum.
+        Returns:
+            True if valid, False otherwise.
+        """
         packet = _checksum(packet)
         return True if int(packet.check,16) == 0 else False
 
-"""
-An inner class to help define packets.
-"""
+    def close(self):
+        """
+        Close the connection
+        """
+        pass
+
+
 class _Packet(object):
+    """
+    An inner class to help define packets.
+    """
     def __init__(self, data = 512*b'\0'):
         self.src_ip = '.'.join([int(b) for b in data[:4]])
         self.src_port = int(data[4:5])
@@ -353,8 +447,8 @@ class _Packet(object):
         packet += '0'*(4-len(checksum)) + checksum
 
         #window size
-        win_sze = hex(self.win_size)[2:]
-        packet += '0'*(4-len(win_sze)) + win_sze
+        win_size = hex(self.win_size)[2:]
+        packet += '0'*(4-len(win_sze)) + win_size
 
         #payload size, flags, and unused bit
         part = str(bin(self.pay_size))[2:] + str(bin(self.flg))[2:] + '0'
@@ -367,10 +461,10 @@ class _Packet(object):
 
         return packet
 
-    """
-    Encodes the packet as a bytes object.
-    """
     def encode(self):
+        """
+        Encodes the packet as a bytes object.
+        """
         packet = bytearray(0)
         #src IP
         ip = self.src_ip.split('.')
