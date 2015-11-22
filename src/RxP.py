@@ -5,6 +5,7 @@ import string
 import math
 import time
 import os
+import threading
 
 #Implementation constants
 
@@ -67,12 +68,26 @@ def listen(port):
         server_c = Connection(sock, SERVER)
         global server_conn
         server_conn = server_c
+        listener = _Listener(server_conn)
         #handshake
         #multithreaded loop to accept connections
-        return True
-    except socket.error:
-        return False
+        # return True
+    except socket.error as e:
+        print(e)
+        # return False
 
+class _Listener(threading.thread):
+    def __init__(self, connection, connection_list):
+        self.connection = connection
+        self.connection_list = connection_list
+    def run(self):
+        while True:
+            pkt = self.connection._recv()
+            if pkt.flags == SYN:
+                self.connection.other_addr = pkt.src_ip
+                if self.connection._handshake():
+                    connection_list.append(self.connection)
+                    #WAIT - do we need to make a new socket??
 
 def accept():
     """
@@ -210,12 +225,28 @@ class Connection(object):
             return False
         else:
             packets = self._packetize(DATA, message)
-            ctr = 0
-            while ctr < win_size:
-                pass #this needs to send and receive at the same time
-            # for packet in packets:
-            #     self.sock.sendto(packet, self.other_addr)
-
+            try:
+                need_ack = []
+                nack_list = []
+                curr_window = []
+                ack_listener = _Ack_Listener(self.sock, need_ack, nack_list)
+                ack_listener.start()
+                while len(packets) > 0:
+                    if len(need_ack) < win_size:
+                        to_send = packets.pop(0)
+                        need_ack.append(to_send)
+                        self.socket.sendto(to_send.encode(), to_send.dest_ip)
+                    if len(nack_list > 0):
+                        for nacked in nack_list:
+                            if nacked in need_ack:
+                                self.socket.sendto(nacked.encode(), nacked.dest_ip)
+                return True
+            except socket.error as e:
+                print("Socket error: " + e)
+                return False
+            except Exception as e:
+                print("Exception: " + e)
+                Return False
 
 
     def setWindow(self, win_size):
@@ -391,6 +422,59 @@ class Connection(object):
         """
         pass
 
+class _Ack_Listener(threading.thread):
+    """
+    Threadable inner class for handling ACKS and NACKS for a sliding window
+    protocol
+    """
+    def __init__(self, sock, ack_list, nack_list, curr_window):
+        """
+        Constructor for Ack_Listener object
+        Params:
+            sock - socket to receive on
+            ack_list - list of packet objects that need acks
+            nack_list - list of packet objects which have been nacked
+        """
+        self.ack_list = ack_list
+        self.nack_list = nack_list
+        self.curr_window = curr_window
+        self.sock = sock
+
+    def run(self):
+        chunks = []
+        bytes_recd = 0
+        checksum_match = False
+        while not checksum_match:
+            while bytes_recd < pkt_size:
+                try:
+                    chunktuple = self.sock.recvfrom(pkt_size - bytes_recd)
+                except socket.timeout as e:
+                    raise e
+                if len(chunktuple) > 0:
+                    if chunktuple[0] == b'':
+                        return None
+                    sender = chunktuple[1]
+                    if len(chunks) > 0:
+                        if chunks[0][1] == sender:
+                            chunks.append(chunktuple)
+                            bytes_recd += len(chunktuple[0])
+                    else:
+                        chunks.append(chunktuple)
+                        bytes_recd += len(chunktuple[0])
+            byteslist = [byte[0] for byte in chunks]
+            pkt = b''.join(byteslist)
+            pkt_object = _Packet(pkt)
+            checksum_match = _validate(pkt_object)
+            if not checksum_match:
+                pass #send nack to whoever sent it
+        if pkt_object.flags == ACK:
+            for pakt in need_ack:
+                if pakt.seq == pkt_object.seq:
+                    need_ack.remove(pakt)
+        elif pkt_object.flags == NACK:
+            for pakt in need_ack:
+                if pakt.seq == pkt_object.seq:
+                    nack_list.append(pakt)
 
 class _Packet(object):
     """
