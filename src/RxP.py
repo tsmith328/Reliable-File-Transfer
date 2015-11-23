@@ -235,11 +235,11 @@ class Connection(object):
                     if len(need_ack) < win_size:
                         to_send = packets.pop(0)
                         need_ack.append(to_send)
-                        self.socket.sendto(to_send.encode(), to_send.dest_ip)
+                        self._send(to_send.encode(), to_send.dest_ip)
                     if len(nack_list > 0):
                         for nacked in nack_list:
                             if nacked in need_ack:
-                                self.socket.sendto(nacked.encode(), nacked.dest_ip)
+                                self._send(nacked.encode(), nacked.dest_ip)
                 return True
             except socket.error as e:
                 print("Socket error: " + e)
@@ -266,13 +266,17 @@ class Connection(object):
         return self.win_size
 
 
-    def _send(self, p_type):
+    def _send(self, packet, dest, seq_num=None, p_type=DATA, data=""):
         """
         Internal method for sending non-data packets
         """
-        packet = _packetize(p_type)
-        #TODO: Support for sequence # acks, error checking, destination?
-        self.sock.send(packet)
+        if p_type == DATA:
+            self.socket.sendto(packet, dest)
+        else:
+            packet = _packetize(p_type, data)
+            if seq_num:
+                packet[0].seq = seq_num
+            self.sock.sendto(packet[0], dest)
 
 
     def _packetize(self, p_type, data = ""):
