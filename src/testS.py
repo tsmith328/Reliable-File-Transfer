@@ -5,7 +5,7 @@ from RxP import Connection, _Packet, SERVER, PKT_SIZE
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(("localhost", 5001))
 
-c = Connection(s, SERVER)
+c = Connection(s, SERVER, '')
 
 while True:
     #Test _send
@@ -13,7 +13,8 @@ while True:
     msg, addr = s.recvfrom(PKT_SIZE)
     print("Got a packet!")
     pkt = _Packet(msg)
-    b = bytearray("Hello, World!", 'utf-8')
+    b = bytearray("Hello, World!", 'utf-8') + bytearray(b'\0'*(486-len(bytearray("Hello, World!",'utf-8'))))
+    b1 = bytearray("Hello, World!", 'utf-8')
     good = b == pkt.payload
     if good:
         print("Good packet. Sending ok.")
@@ -29,9 +30,10 @@ while True:
     p.src_port = 5001
     p.dest_ip = addr[0]
     p.dest_port = int(addr[1])
-    p.pay_size = len(b)
-    p.payload = b
+    p.pay_size = len(b1)
+    p.payload = b1
     p = c._checksum(p)
+    print(p)
     s.sendto(p.encode(), addr)
     print("Packet sent!")
 

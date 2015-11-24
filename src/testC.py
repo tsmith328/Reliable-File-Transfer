@@ -5,7 +5,7 @@ from difflib import Differ
 
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(("localhost", 5000))
-c = Connection(s, RxP.CLIENT)
+c = Connection(s, RxP.CLIENT, ('127.0.0.1', 5001))
 p = RxP._Packet()
 
 #Script to test functionality of various methods
@@ -19,7 +19,7 @@ p.num_seg = 403
 p.win_size = 30
 p.pay_size = len(bytearray("Hello, World!", 'utf-8'))
 p.flg = RxP.ACK | RxP.DATA
-p.payload = bytearray("Hello, World!", 'utf-8')
+p.payload = bytearray("Hello, World!", 'utf-8') + bytearray(b'\0'*(486-len(bytearray("Hello, World!",'utf-8'))))
 
 #Test checksum and validate
 p = c._checksum(p)
@@ -36,19 +36,19 @@ c.setWindow(500)
 print("Get/Set Window Passed!" if c.getWindow() == win else "Get/Set Window Failed!")
 
 #Testing _send
-c._send(p, ('localhost', 5001))
+c._send(p)
 msg, addr = s.recvfrom(1)
 print("_send Passed!" if msg == b'1' else "_send Failed!")
 
 #Testing _recv
-pkt = c._recv(39)
+pkt = c._recv()
 if not pkt:
     print("_recv Failed! (None)")
 else:
     print("_recv Passed!" if pkt.payload == bytearray("Hello, World!", 'utf-8') else "_recv Failed!")
 
 #Testing _recv with bad checksum
-pkt = c._recv(39)
+pkt = c._recv()
 if pkt == None:
     print("_recv corruption test Passed!")
 else:

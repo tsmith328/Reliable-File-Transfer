@@ -292,7 +292,7 @@ class Connection(object):
         while bytes_sent < len(pkt): #Make sure full packet is sent
             #Put data on the wire
             try:
-                bytes_sent += self.sock.sendto(pkt[bytes_sent:], other_addr)
+                bytes_sent += self.sock.sendto(pkt[bytes_sent:], self.other_addr)
             except socket.timeout:
                 #Retry a few times. Wait after each failure.
                 if tries == MAX_RETRIES:
@@ -358,7 +358,7 @@ class Connection(object):
             p.flg = p_type
             #Payload
             p.payload = bytearray(payload[i])
-            packet = self._checksum(packet)
+            packet = self._checksum(p)
             packets.append(packet)
         return packets
 
@@ -435,7 +435,7 @@ class Connection(object):
             packet -- A Packet to ACKnowledge
         """
         #Construct ACK packet and set sequence number to equal packet's sequence number
-        ack = _packetize(ACK)[0]
+        ack = self._packetize(ACK)[0]
         ack.seq = packet.seq
         self._send(ack)
 
@@ -446,7 +446,7 @@ class Connection(object):
             packet -- A Packet to NotACKnowledge
         """
         #Construct NACK packet and set sequence number to equal packet's sequence number
-        nack = _packetize(NACK)[0]
+        nack = self._packetize(NACK)[0]
         nack.seq = packet.seq
         self._send(nack)
 
@@ -495,6 +495,7 @@ class Connection(object):
     def close(self):
         """
         Close the connection
+        Returns after the connection has been closed.
         """
         pass
 
@@ -555,7 +556,7 @@ class _Packet(object):
         self.payload = bytearray([int(b) for b in data[26:]])
 
     def __len__(self):
-        return len(self.encode())
+        return int(len(str(self))/2)
 
     def __repr__(self):
         packet = ''
