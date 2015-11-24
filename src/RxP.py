@@ -17,6 +17,7 @@ SERVER = 1
 MAX_RETRIES = 5
 MAX_PAYLOAD = 486
 PKT_SIZE = 512
+TIMEOUT = 0.5
 
 #Packet p_types
 ACK = 0b100000
@@ -45,6 +46,7 @@ def connect(address):
         return None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(TIMEOUT)
         sock.connect(address)
         conn = Connection(sock, CLIENT, address)
         return conn if conn._handshake() else None
@@ -71,21 +73,23 @@ def listen(port):
         server_conn = server_c
         listener = _Listener(server_conn, connections)
     except socket.error as e:
-        print(e)
         return False
 
 class _Listener(threading.Thread):
     def __init__(self, connection, connection_list):
+        threading.Thread.__init__()
         self.connection = connection
         self.connection_list = connection_list
 
     def run(self):
         while True:
+            self.connection.sock.settimeout(None)
             pkt = self.connection._recv()
+            self.connection.sock.settimeout(TIMEOUT)
             if pkt.flags == SYN:
-                self.connection.other_addr = pkt.src_ip #Necessary?
+                self.connection.other_addr = (pkt.src_ip, pkt.src_port)
                 if self.connection._handshake():
-                    c = Connection(s, SERVER)
+                    c = Connection(s, SERVER, self.connection.other_addr)
                     connection_list.put(c)
 
 def accept():
@@ -94,10 +98,9 @@ def accept():
     Returns:
         a Connection to the client
     """
-    while len(connections) < 1:
-        time.sleep(1)
-    conn = connections.get(0)
-    conn.other_addr = conn.sock.getpeername()
+    while connections.empty():
+        time.sleep(0.1)
+    conn = connections.get()
     return conn
 
 
@@ -111,13 +114,14 @@ class Connection(object):
         self.win_size = 4
         self.sock = sock
         self.other_addr = other_addr
+        self.c_type = c_type
 
 
     def _handshake(self):
         """
         Returns True for good handshake, False for bad
         """
-        return _client_handshake() if self.p_type == CLIENT else _server_handshake()
+        return self._client_handshake() if self.c_type == CLIENT else self._server_handshake()
 
     def _client_handshake(self):
         """
@@ -125,39 +129,51 @@ class Connection(object):
         Returns:
             bool - True for good handshake, False for bad
         """
-        self._send(SYN) #Send SYN
+        #Send SYN packet
+        syn = self._Packetize(SYN)
+        self._send(syn)
+        pkt_type = SYN | ACK | DATA
         eq_addr = False
         corr_pkt = False
-        pkt_type = SYN | ACK | DATA
         count = 0
-        while not eq_addr and not corr_pkt and count < MAX_RETRIES:
+        #Get SynAckData
+        while not eq_addr and not corr_pkt:
+            eq_addr = False
+            corr_pkt = False
+            if count == MAX_RETRIES:
+                raise socket.timeout #Reset connection
             try:
                 syn_ack_data = self._recv()
+                #Check if packet is SynAckData
                 if syn_ack_data.src_ip == other_addr:
                     eq_addr = True
-                if pkt_type == syn_ack_data.flags:
+                if pkt_type == syn_ack_data.flg:
                     corr_pkt = True
                 else:
-                    pass #nack
+                    raise socket.timeout #Reset connection
             except socket.timeout:
+                self._send(self._packetize(RST)[0]) #send reset and kill
                 return False
         addr_tup = self.sock.getsockname()
-        to_hash = syn_ack_data.data + str(addr_tup[0]) + str(addr_tup[1])
+        to_hash = syn_ack_data.payload + bytearray(str(addr_tup[0], 'utf-8')) + bytearray(str(addr_tup[1]), 'utf-8')
         hashed = _make_hash(to_hash)
-        #TODO-send syn+ack with hash
+        self._send(self._packetize(SYN | ACK, bytearray(hashed))[0])
         count = 0
         while count < MAX_RETRIES:
             try:
                 success = self._recv()
                 if success.src_ip == other_addr:
-                    if success.flags == ACK:
+                    if success.flg == ACK:
                         return True
-                    elif success.flags == NACK:
+                    elif success.flg == NACK:
                         return False
                     else:
-                        pass #nack
+                        raise socket.timeout
             except socket.timeout:
+                self._send(self._packetize(RST)[0]) #send reset and kill
                 return False
+        self._send(self._packetize(RST)[0])
+        return False
 
     def _server_handshake(self):
         """
@@ -165,29 +181,33 @@ class Connection(object):
         Returns:
             bool - True for good handshake, False for bad
         """
-        #Assuming we have received a SYN packet from a client
+        #Assuming we have received a SYN packet from a client,
+        #Send SynAckData with random key
         key = self._gen_key()
         pkt_type = SYN | ACK | DATA
-        #send syn ack data packet with key
-
+        pkt = self._packetize(pkt_type, key)
+        self._send(pkt)
+        #Get SynAck packet with hash
         corr_pkt = False
         pkt_type = SYN | ACK
         count = 0
-        while not corr_pkt and count < MAX_RETRIES:
+        while not corr_pkt:
+            if count == MAX_RETRIES:
+                raise socket.timeout
             try:
                 syn_ack = self._recv()
-                if syn_ack.flags == pkt_type:
-                    to_hash = key + syn_ack.src_ip + syn_ack.src_port
+                if syn_ack.flg == pkt_type:
+                    to_hash = bytearray(key) + bytearray(syn_ack.encode()[:4]) + bytearray(syn_ack.encode()[4:6])
                     serv_hash = _make_hash(to_hash)
                     if serv_hash == syn_ack.payload:
                         self._send(ACK)
                         return True
                     else:
-                        self._send(NACK)
-                        return False
+                        raise socket.timeout #NACK request
                 else:
                     self._send(NACK)
             except socket.timeout:
+                self._send(self._packetize(NACK)) #NACK and kill
                 return False
 
 
@@ -205,49 +225,83 @@ class Connection(object):
         Params:
             to_hash - message to hashed
         Returns:
-            hashed - hashed Message
+            hashed message as bytes
         """
         m = hashlib.md5()
-        m.update(to_hash.encode('utf-8'))
-        return m.hexdigest()
+        m.update(to_hash)
+        return m.digest()
 
     def send(self, message):
         """
         Reliably sends a message across the connection.
         Will retry MAX_RETRIES times before reporting failure.
+        Limits packets sent to 50 per second
         Params:
             message -- The message to send.
         Returns:
             True if the message was successfully sent, False otherwise.
         """
-        msgsize = len(message)
-        if msgsize < 0:
+        msg_size = len(message)
+        timestamp = time.time()
+        if msg_size < 0:
             return False
         else:
             packets = self._packetize(DATA, message)
             try:
                 need_ack = queue.Queue()
                 nack_list = queue.Queue()
-                #curr_window = []
-                ack_listener = _Ack_Listener(self.sock, need_ack, nack_list)
+                num_pkts = [len(packets)] #Ugly, but only good way to pass integer b/w threads
+                mutex = threading.Lock() #Lock for num_pkts. Probably not necessary, but safe.
+                #Listens for ACKs on sent packets.
+                ack_listener = _Ack_Listener(self.sock, need_ack, nack_list, num_pkts)
                 ack_listener.start()
-                while len(packets) > 0:
+                #While there are packets that need to be sent, or we are waiting on ACKs, loop
+                while len(packets) > 0 or len(need_ack) > 0 or len(nack_list) > 0:
+                    #If room in window, send a packet
                     if len(need_ack) < win_size:
+                        if time.time() < timestamp + 0.020:
+                            continue #Pass if not enough time has elapsed (0.020 seconds b/w packets)
                         to_send = packets.pop(0)
                         need_ack.put(to_send)
-                        self._send(to_send.encode(), to_send.dest_ip)
+                        sent = self._send(to_send.encode())
+                        timestamp = time.time() #Update timestamp of last-sent packet
+                        if not sent: #Packet failed to send
+                            return False
+                    #Check NACKed packets, resend them (Re-add to packets list).
                     if len(nack_list > 0):
                         for nacked in nack_list:
-                            if nacked in need_ack:
-                                self._send(nacked.encode(), nacked.dest_ip)
+                            packets.append(nacked) #Resend all NACKed packets
+                #All packets should be sent and ACKed by now.
                 return True
             except socket.error as e:
-                print("Socket error: " + e)
                 return False
             except Exception as e:
-                print("Exception: " + e)
                 return False
 
+    def _send(self, packet):
+        """
+        Sends a Packet to the other endpoint of this Connection.
+        Params:
+            packet - The Packet to send over the wire
+        Returns:
+            True if the Packet was successfully sent, False otherwise
+        """
+        bytes_sent = 0
+        tries = 0
+        pkt = packet.encode()
+        while bytes_sent < len(pkt): #Make sure full packet is sent
+            #Put data on the wire
+            try:
+                bytes_sent += self.sock.sendto(pkt[bytes_sent:], other_addr)
+            except socket.timeout:
+                #Retry a few times. Wait after each failure.
+                if tries == MAX_RETRIES:
+                    return False
+                tries += 1
+                time.sleep(0.1)
+                continue
+        #All data should be on wire
+        return True
 
     def setWindow(self, win_size):
         """
@@ -266,31 +320,22 @@ class Connection(object):
         return self.win_size
 
 
-    def _send(self, packet, dest, seq_num=None, p_type=DATA, data=""):
+    def _packetize(self, p_type, data = b''):
         """
-        Internal method for sending non-data packets
-        """
-        if p_type == DATA:
-            self.sock.sendto(packet.encode(), dest)
-        else:
-            packet = _packetize(p_type, data)
-            if seq_num:
-                packet[0].seq = seq_num
-            self.sock.sendto(packet[0], dest)
-
-
-    def _packetize(self, p_type, data = ""):
-        """
-        Splits a data string into packets with payloads of MAX_PAYLOAD length.
+        Creates a list of Packets for the provided data.
+        If p_type has the DATA bit set, a list of DATA Packets is created which contains data.
+        If p_type has other flag bits set, a single Packet is returned in a list with those flags set.
+        Params:
+            p_type -- The type of the packets, as defined in this module
+            data -- Optionally, the data to inculde in the packets' payloads, as bytes.
         Returns:
             a list of packets
         """
         packets = []
-
         if len(data) > 0:
-            payload = list((data[0+i:(MAX_PAYLOAD)+i] for i in range(0, len(data), MAX_PAYLOAD)))
+            payload = list((data[i:(MAX_PAYLOAD)+i] for i in range(0, len(data), MAX_PAYLOAD)))
         else:
-            payload = [""]
+            payload = [b'']
         num_seg = len(payload)
         for i in range(num_seg):
             p = _Packet()
@@ -302,7 +347,7 @@ class Connection(object):
             p.dest_ip = self.other_addr[0]
             p.dest_port = self.other_addr[1]
             #Sequence number
-            p.seq = i + last_sent + 1
+            p.seq = i
             #Number of segments
             p.num_seg = num_seg
             #Window size
@@ -312,75 +357,98 @@ class Connection(object):
             #Flags
             p.flg = p_type
             #Payload
-            p.payload = bytearray(payload[i], 'utf-8')
-            if len(p.payload) < 486:
-                p.payload.extend([0 for x in range(486 - len(p.payload))])
-            packet = _checksum(packet)
+            p.payload = bytearray(payload[i])
+            packet = self._checksum(packet)
             packets.append(packet)
         return packets
 
 
-    def recv(self, msgsize=MAX_PAYLOAD):
-        """Receive data as a list of packets
-        Params:
-            msgsize - size of message to receive
-        Returns:
-            ret - message as bytes array encoded in hex
+    def recv(self, msg_size=MAX_PAYLOAD):
         """
-        #TODO - sequence number validation
-        if msgsize < 0:
-            return []
-        elif msgsize < MAX_PAYLOAD:
-            msgsize = MAX_PAYLOAD
-        numpackets = msgsize / MAX_PAYLOAD
-        payload_list = []
-        for i in range(numpackets):
+        Receive msg_size bytes of data.
+        Params:
+            msg_size - size (in bytes) of message to receive
+        Returns:
+            The message as bytes.
+        """
+        if msg_size < 0:
+            return b'' #If invalid, return empty bytes
+        elif msg_size < MAX_PAYLOAD:
+            msg_size = MAX_PAYLOAD
+        numpackets = math.ceil(msg_size / MAX_PAYLOAD)
+        payload_list = [None] * numpackets
+        while None in payload_list: #Keep going until all packets received
             pkt = self._recv()
-            payload = pkt[26:]
-            payload_list.append(payload)
-        ret = b''.join(payload_list)
-            # self._send(ACK)
-        return ret
-
+            if numpackets != pkt.num_seg:
+                continue #Skip this packet. It's not part of this message
+            payload = pkt.payload
+            payload_list[pkt.seq] = payload
+        return b''.join(payload_list)
 
 
     def _recv(self, pkt_size=PKT_SIZE):
-        """Internal method to receive a packet
+        """
+        Receive a single Packet
         Params:
             pkt_size - size of packet to receive (default PKT_SIZE)
         Returns:
-            pkt - A Packet object (None if socket connection broken)
+            A Packet object (or None)
         """
         chunks = []
+        tries = 0
         bytes_recd = 0
         checksum_match = False
-        while not checksum_match:
-            while bytes_recd < pkt_size:
-                try:
-                    chunktuple = self.sock.recvfrom(pkt_size - bytes_recd)
-                except socket.timeout as e:
-                    raise e
-                if len(chunktuple) > 0:
-                    if chunktuple[0] == b'':
-                        return None
-                    sender = chunktuple[1]
-                    if len(chunks) > 0:
-                        if chunks[0][1] == sender:
-                            chunks.append(chunktuple)
-                            bytes_recd += len(chunktuple[0])
-                    else:
-                        chunks.append(chunktuple)
-                        bytes_recd += len(chunktuple[0])
-            byteslist = [byte[0] for byte in chunks]
-            pkt = b''.join(byteslist)
-            pkt_object = _Packet(pkt)
-            checksum_match = self._validate(pkt_object)
-            if not checksum_match:
-                self._send(NACK)
+        while bytes_recd < pkt_size:
+            try:
+                chunk = self.sock.recvfrom(pkt_size - bytes_recd)
+            except socket.timeout: #No data (shouldn't happen if socket doesn't block)
+                #Retry a few times. Wait after each failure.
+                if tries == MAX_RETRIES:
+                    return None
+                tries += 1
+                time.sleep(0.1)
+                continue
+            if chunk[0] == b'': #No data (shouldn't happen if socket blocks.)
                 return None
+            sender = chunk[1]
+            if len(chunks) > 0:
+                if chunks[0][1] == sender: #Check it's from the same sender.
+                    chunks.append(chunk)
+                    bytes_recd += len(chunk[0])
+            else:
+                chunks.append(chunk) #First chunk. Assume the rest should be from same sender.
+                bytes_recd += len(chunk[0])
+        data = [chk[0] for chk in chunks]
+        pkt = b''.join(data)
+        pkt_object = _Packet(pkt)
+        checksum_match = self._validate(pkt_object)
+        if not checksum_match: #Bad packet. Send NACK
+            self._nack(pkt_object)
+            return None
+        self._ack(pkt_object)
         return pkt_object
 
+    def _ack(self, packet):
+        """
+        Sends an ACK message for a received packet.
+        Params:
+            packet -- A Packet to ACKnowledge
+        """
+        #Construct ACK packet and set sequence number to equal packet's sequence number
+        ack = _packetize(ACK)[0]
+        ack.seq = packet.seq
+        self._send(ack)
 
+    def _nack(self, packet):
+        """
+        Sends a NACK message for a received packet.
+        Params:
+            packet -- A Packet to NotACKnowledge
+        """
+        #Construct NACK packet and set sequence number to equal packet's sequence number
+        nack = _packetize(NACK)[0]
+        nack.seq = packet.seq
+        self._send(nack)
 
     def _checksum(self, packet):
         """
@@ -418,8 +486,11 @@ class Connection(object):
         Returns:
             True if valid, False otherwise.
         """
+        check = packet.check
         packet = self._checksum(packet)
-        return True if packet.check == 0 else False
+        valid = packet.check == 0
+        packet.check = check #Restore checksum of the packet.
+        return valid
 
     def close(self):
         """
@@ -432,31 +503,39 @@ class _Ack_Listener(threading.Thread):
     Threadable inner class for handling ACKS and NACKS for a sliding window
     protocol
     """
-    def __init__(self, conn, ack_list, nack_list):
+    def __init__(self, conn, ack_list, nack_list, num_pkts, mutex):
         """
         Constructor for Ack_Listener object
         Params:
             conn - Connection to receive on
-            ack_list - list of packet objects that need acks
-            nack_list - list of packet objects which have been nacked
+            ack_list - list of Packet objects that need ACKs
+            nack_list - list of Packet objects which have been NACKed
+            num_pkts - the number of packets that will need ACKs
+            mutex - a threading lock for num_pkts
         """
+        threading.Thread.__init__(self) #SUPAH
         self.ack_list = ack_list
         self.nack_list = nack_list
         self.conn = conn
+        self.num_pkts = num_pkts
+        self.mutex = mutex
 
     def run(self):
-        pkt_object = conn._recv()
-        if pkt_object.flags == ACK:
-            for pakt in need_ack:
-                if pakt.seq == pkt_object.seq:
-                    need_ack.get(pakt)
-        elif pkt_object.flags == NACK:
-            for pakt in need_ack:
-                if pakt.seq == pkt_object.seq:
-                    nack_list.put(pakt)
-        else:
-            pass
-            #TODO: give to correct connection
+        while num_pkts[0] > 0: #If ==0, we know we've ACKed all packets
+            pkt_object = conn._recv() #Grab a packet
+            if pkt_object == None:
+                continue #No packet, or corrupt. 
+            if pkt_object.flg == ACK: #Got ACK
+                for pakt in need_ack:
+                    if pakt.seq == pkt_object.seq:
+                        need_ack.get(pakt) #Remove packet from ACK list
+                        with self.mutex:
+                            num_pkts[0] -= 1 #Decrement num_pkts
+            elif pkt_object.flg == NACK:
+                for pakt in need_ack:
+                    if pakt.seq == pkt_object.seq:
+                        nack_list.put(pakt) #Got NACK
+
 
 class _Packet(object):
     """
@@ -577,5 +656,9 @@ class _Packet(object):
         #payload
         for b in self.payload:
             packet.append(b)
+
+        #Buffer the end
+        if len(packet) < 512:
+            packet += bytearray([0]*(512-len(packet)))
 
         return bytes(packet)

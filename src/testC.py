@@ -24,7 +24,6 @@ p.payload = bytearray("Hello, World!", 'utf-8')
 #Test checksum and validate
 p = c._checksum(p)
 val = c._validate(p)
-p = c._checksum(p)
 print("Checksum and Validate Passed!" if val else "Checksum and Validate failed!")
 
 #Test Packet constructor, encode, __len__, and __repr__
@@ -54,3 +53,4 @@ if pkt == None:
     print("_recv corruption test Passed!")
 else:
     print("_recv corruption test Failed!")
+
