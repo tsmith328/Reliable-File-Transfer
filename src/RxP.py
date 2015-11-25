@@ -118,6 +118,7 @@ class Connection(object):
         self.sock = sock
         self.other_addr = other_addr
         self.c_type = c_type
+        self.is_open = True
 
 
     def _handshake(self):
@@ -382,6 +383,10 @@ class Connection(object):
         payload_list = [None] * numpackets
         while None in payload_list: #Keep going until all packets received
             pkt = self._recv()
+            if pkt == None:
+                continue
+            if pkt.flg == FIN:
+                self._close()
             if numpackets != pkt.num_seg:
                 continue #Skip this packet. It's not part of this message
             payload = pkt.payload
@@ -500,7 +505,49 @@ class Connection(object):
         Close the connection
         Returns after the connection has been closed.
         """
-        pass
+        #Send FIN
+        self._send(self._packetize(FIN))
+        #Listen for FIN+ACK
+        while True:
+            pkt = self._recv()
+            #Check if FIN+ACK
+            if pkt == None:
+                continue
+            if pkt.flg != FIN | ACK:
+                continue
+            #Send ACK, then free everything
+            self._send(ACK)
+            self.sock.close()
+            return
+
+    def _close(self):
+        """
+        Called when a FIN packet is received.
+        Negotiates a close and closes the socket.
+        """
+        #Send FIN + ACK
+        self._send(self._packetize(ACK | FIN))
+        while True:
+            pkt = self._recv()
+            if pkt == None:
+                continue
+            if pkt.flg != ACK:
+                continue
+            #Got ACK. Connection closed
+            self.sock.close()
+            #Notify user
+            raise ConnectionClosedError(self)
+
+class ConnectionClosedError(Exception):
+    """
+    Is raised when the connection is closed by the
+    other endpoint.
+    """
+    def __init__(self, conn):
+        conn.is_open = False
+
+    def __str__(self):
+        return "This connection has been closed."
 
 class _Ack_Listener(threading.Thread):
     """
