@@ -31,22 +31,25 @@ server_conn = None
 connections = queue.Queue()
 
 
-def connect(address):
+def connect(address, bindport):
     """
     Attempts to connect to the server located at address.
     Params:
         address -- a tuple: (ip_address (str), port_number (str or int))
+        bindport - port to bind the client to
     Returns:
         A Connection to this server, or None if it cannot connect.
     """
     try:
         port = int(address[1])
+        bindport = int(bindport)
         address = (address[0], port)
     except ValueError:
         return None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(TIMEOUT)
+        sock.bind(('localhost', bindport))
         sock.connect(address)
         conn = Connection(sock, CLIENT, address)
         return conn if conn._handshake() else None
@@ -525,7 +528,7 @@ class _Ack_Listener(threading.Thread):
         while num_pkts[0] > 0: #If ==0, we know we've ACKed all packets
             pkt_object = conn._recv() #Grab a packet
             if pkt_object == None:
-                continue #No packet, or corrupt. 
+                continue #No packet, or corrupt.
             if pkt_object.flg == ACK: #Got ACK
                 for pakt in need_ack:
                     if pakt.seq == pkt_object.seq:

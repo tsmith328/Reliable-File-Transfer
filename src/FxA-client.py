@@ -1,4 +1,4 @@
-#import RxP
+import RxP
 import argparse
 
 def argparser():
@@ -14,8 +14,13 @@ def argparser():
 
 def main():
     args = argparser()
-    while True:
-        cmd = input("Command: ")
+    conn = RxP.connect((args.A, args.P), args.X)
+    if not conn:
+        print("Error connecting to server, check your connection!")
+    else:
+        print("Connection successful!")
+        while True:
+            cmd = input("Command: ")
 
 if __name__ == '__main__':
     main()
