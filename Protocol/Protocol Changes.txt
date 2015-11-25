@@ -1,0 +1,3 @@
+Number of fields in FLAGS is six (6), not five (5)
+Total size of payload is 486 bytes, not 498.
+Added rxp.ConnectionClosedError to API.
