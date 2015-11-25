@@ -1,5 +1,6 @@
 import RxP
 import argparse
+from FxA-connections import *
 
 def argparser():
     """Parse arguments
@@ -17,10 +18,11 @@ def main():
     RxP.listen((args.A, args.X))
     print("Listening for connections...")
     conn = RxP.accept()
+    parser = Command_Parser(args.X, args.A, args.P, conn)
     print("Connection established!")
     while True:
         cmd = input("Command: ")
-        cmd = cmd.split(' ')
-        
+        parser.parse_command(cmd)
+
 if __name__ == '__main__':
     main()
