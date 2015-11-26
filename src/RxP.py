@@ -45,15 +45,17 @@ def connect(address, bindport):
         bindport = int(bindport)
         address = (address[0], port)
     except ValueError:
+        print("ValueError")
         return None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(TIMEOUT)
         sock.bind(('localhost', bindport))
         sock.connect(address)
-        conn = Connection(sock, CLIENT, address)
+        conn = Connection(sock, CLIENT, (address[0], port))
         return conn if conn._handshake() else None
-    except socket.error:
+    except socket.error as e:
+        print("Socket Error " + str(e))
         return None
 
 def listen(port):
@@ -75,12 +77,13 @@ def listen(port):
         global server_conn
         server_conn = server_c
         listener = _Listener(server_conn, connections)
+        listener.start()
     except socket.error as e:
         return False
 
 class _Listener(threading.Thread):
     def __init__(self, connection, connection_list):
-        threading.Thread.__init__()
+        threading.Thread.__init__(self)
         self.connection = connection
         self.connection_list = connection_list
 
@@ -89,7 +92,8 @@ class _Listener(threading.Thread):
             self.connection.sock.settimeout(None)
             pkt = self.connection._recv()
             self.connection.sock.settimeout(TIMEOUT)
-            if pkt.flags == SYN:
+            if pkt.flg == SYN:
+                print("Syn received")
                 self.connection.other_addr = (pkt.src_ip, pkt.src_port)
                 if self.connection._handshake():
                     c = Connection(s, SERVER, self.connection.other_addr)
@@ -134,8 +138,8 @@ class Connection(object):
             bool - True for good handshake, False for bad
         """
         #Send SYN packet
-        syn = self._Packetize(SYN)
-        self._send(syn)
+        syn = self._packetize(SYN)
+        self._send(syn[0])
         pkt_type = SYN | ACK | DATA
         eq_addr = False
         corr_pkt = False
@@ -145,15 +149,17 @@ class Connection(object):
             eq_addr = False
             corr_pkt = False
             if count == MAX_RETRIES:
+                print("socket timeout")
                 raise socket.timeout #Reset connection
             try:
                 syn_ack_data = self._recv()
                 #Check if packet is SynAckData
-                if syn_ack_data.src_ip == other_addr:
+                if syn_ack_data.src_ip == self.other_addr[0]:
                     eq_addr = True
                 if pkt_type == syn_ack_data.flg:
                     corr_pkt = True
                 else:
+                    print("Socket timeout")
                     raise socket.timeout #Reset connection
             except socket.timeout:
                 self._send(self._packetize(RST)[0]) #send reset and kill
@@ -189,7 +195,7 @@ class Connection(object):
         #Send SynAckData with random key
         key = self._gen_key()
         pkt_type = SYN | ACK | DATA
-        pkt = self._packetize(pkt_type, key)
+        pkt = self._packetize(pkt_type, key)[0]
         self._send(pkt)
         #Get SynAck packet with hash
         corr_pkt = False
@@ -204,16 +210,15 @@ class Connection(object):
                     to_hash = bytearray(key) + bytearray(syn_ack.encode()[:4]) + bytearray(syn_ack.encode()[4:6])
                     serv_hash = _make_hash(to_hash)
                     if serv_hash == syn_ack.payload:
-                        self._send(ACK)
+                        self._send(self.packetize(ACK)[0])
                         return True
                     else:
                         raise socket.timeout #NACK request
                 else:
-                    self._send(NACK)
+                    self._send(self._packetize(NACK)[0])
             except socket.timeout:
-                self._send(self._packetize(NACK)) #NACK and kill
+                self._send(self._packetize(NACK)[0]) #NACK and kill
                 return False
-
 
     def _gen_key(self):
         """
@@ -412,11 +417,13 @@ class Connection(object):
             except socket.timeout: #No data (shouldn't happen if socket doesn't block)
                 #Retry a few times. Wait after each failure.
                 if tries == MAX_RETRIES:
+                    print("Receive Timeout")
                     return None
                 tries += 1
                 time.sleep(0.1)
                 continue
             if chunk[0] == b'': #No data (shouldn't happen if socket blocks.)
+                print("no data")
                 return None
             sender = chunk[1]
             if len(chunks) > 0:
@@ -432,8 +439,11 @@ class Connection(object):
         checksum_match = self._validate(pkt_object)
         if not checksum_match: #Bad packet. Send NACK
             self._nack(pkt_object)
+            print("bad packet")
             return None
         self._ack(pkt_object)
+        if not pkt_object:
+            print("Packet is none")
         return pkt_object
 
     def _ack(self, packet):
@@ -443,6 +453,8 @@ class Connection(object):
             packet -- A Packet to ACKnowledge
         """
         #Construct ACK packet and set sequence number to equal packet's sequence number
+        if self.other_addr == "":
+            self.other_addr = (packet.src_ip, packet.src_port)
         ack = self._packetize(ACK)[0]
         ack.seq = packet.seq
         self._send(ack)
