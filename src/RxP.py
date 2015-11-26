@@ -394,7 +394,9 @@ class Connection(object):
             msg_size = MAX_PAYLOAD
         numpackets = math.ceil(msg_size / MAX_PAYLOAD)
         payload_list = [None] * numpackets
+        print(numpackets)
         while None in payload_list: #Keep going until all packets received
+            print(payload_list)
             pkt = self._recv()
             if pkt == None:
                 continue
@@ -455,6 +457,7 @@ class Connection(object):
             return None
         if pkt_object.flg & (ACK | NACK) == 0:
             self._ack(pkt_object)
+        print(pkt_object)
         return pkt_object
 
     def _ack(self, packet):

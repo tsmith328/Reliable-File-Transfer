@@ -24,36 +24,6 @@ p.payload = bytearray("Hello, World!", 'utf-8') + bytearray(b'\0'*(486-len(bytea
 
 #Test checksum and validate
 p = c._checksum(p)
-val = c._validate(p)
-print("Checksum and Validate Passed!" if val else "Checksum and Validate failed!")
-
-#Test Packet constructor, encode, __len__, and __repr__
-q = _Packet(p.encode())
-print("Init, str, len Passed!" if len(q) == len(p) and str(q)==str(p) else "Init, str, len Failed!")
-
-#Tests get and set window
-win = 500
-c.setWindow(500)
-print("Get/Set Window Passed!" if c.getWindow() == win else "Get/Set Window Failed!")
-
-#Testing _send
-c._send(p)
-msg, addr = s.recvfrom(1)
-print("_send Passed!" if msg == b'1' else "_send Failed!")
-
-#Testing _recv
-pkt = c._recv()
-if not pkt:
-    print("_recv Failed! (None)")
-else:
-    print("_recv Passed!" if pkt.payload[:13] == bytearray("Hello, World!", 'utf-8') else "_recv Failed!")
-
-#Testing _recv with bad checksum
-pkt = c._recv()
-if pkt == None:
-    print("_recv corruption test Passed!")
-else:
-    print("_recv corruption test Failed!")
 
 #Testing send and receive
 print("Testing send and recv")
