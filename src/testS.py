@@ -45,8 +45,9 @@ while True:
 
 
     #Test send and recv
+    print("Waiting for message.")
+    m = c.recv(len("Lorem ipsum dolor set."*40))
     print("Got a message")
-    m = c.recv(len("Lorem ipsum dolor set."*20))
     print(str(m))
     print(len(m))
     print("Echoing to client")

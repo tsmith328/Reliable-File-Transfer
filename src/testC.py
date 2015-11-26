@@ -57,9 +57,8 @@ else:
 
 #Testing send and receive
 print("Testing send and recv")
-message = "Lorem ipsum dolor set."*20
+message = "Lorem ipsum dolor set."*40
 mess = message.encode()
-mess += b'\0'*(486-len(mess))
 sent = c.send(mess)
 print("Sent message:", str(sent))
 mess2 = c.recv(len(mess))

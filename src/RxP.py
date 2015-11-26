@@ -402,7 +402,7 @@ class Connection(object):
                 self._close()
             if numpackets != pkt.num_seg:
                 continue #Skip this packet. It's not part of this message
-            payload = pkt.payload
+            payload = pkt.payload[:pkt.pay_size]
             payload_list[pkt.seq] = payload
         return b''.join(payload_list)
 
