@@ -5,7 +5,8 @@ from RxP import Connection, _Packet, SERVER, PKT_SIZE
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(("localhost", 5001))
 
-c = Connection(s, SERVER, '')
+c = Connection(s, SERVER, ('127.0.0.1', 5000))
+c.win_size = 1
 
 while True:
     #Test _send
@@ -30,13 +31,24 @@ while True:
     p.src_port = 5001
     p.dest_ip = addr[0]
     p.dest_port = int(addr[1])
-    p.pay_size = len(b1)
-    p.payload = b1
+    p.pay_size = len(b)
+    p.payload = b
     p = c._checksum(p)
-    print(p)
-    s.sendto(p.encode(), addr)
+    c._send(p)
     print("Packet sent!")
+    s.recvfrom(RxP.PKT_SIZE)
 
     #Test _recv bad checksum
     p.check += 30
-    s.sendto(p.encode(), addr)
+    c._send(p)
+    s.recvfrom(RxP.PKT_SIZE)
+
+
+    #Test send and recv
+    print("Got a message")
+    m = c.recv(len("Lorem ipsum dolor set."*20))
+    print(str(m))
+    print(len(m))
+    print("Echoing to client")
+    sent = c.send(m)
+    print("Message echoed:", str(sent))

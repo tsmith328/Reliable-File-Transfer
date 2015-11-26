@@ -7,6 +7,7 @@ s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(("localhost", 5000))
 c = Connection(s, RxP.CLIENT, ('127.0.0.1', 5001))
 p = RxP._Packet()
+c.win_size = 1
 
 #Script to test functionality of various methods
 #Set up packet
@@ -45,7 +46,7 @@ pkt = c._recv()
 if not pkt:
     print("_recv Failed! (None)")
 else:
-    print("_recv Passed!" if pkt.payload == bytearray("Hello, World!", 'utf-8') else "_recv Failed!")
+    print("_recv Passed!" if pkt.payload[:13] == bytearray("Hello, World!", 'utf-8') else "_recv Failed!")
 
 #Testing _recv with bad checksum
 pkt = c._recv()
@@ -54,3 +55,15 @@ if pkt == None:
 else:
     print("_recv corruption test Failed!")
 
+#Testing send and receive
+print("Testing send and recv")
+message = "Lorem ipsum dolor set."*20
+mess = message.encode()
+mess += b'\0'*(486-len(mess))
+sent = c.send(mess)
+print("Sent message:", str(sent))
+mess2 = c.recv(len(mess))
+print("Got message")
+print(mess)
+print(mess2)
+print("Send and recv passed!" if sent and mess == mess2 else "Send and recv failed!")

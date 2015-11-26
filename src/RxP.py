@@ -260,29 +260,39 @@ class Connection(object):
                 num_pkts = [len(packets)] #Ugly, but only good way to pass integer b/w threads
                 mutex = threading.Lock() #Lock for num_pkts. Probably not necessary, but safe.
                 #Listens for ACKs on sent packets.
-                ack_listener = _Ack_Listener(self.sock, need_ack, nack_list, num_pkts)
+                ack_listener = _Ack_Listener(self, need_ack, nack_list, num_pkts, mutex)
                 ack_listener.start()
                 #While there are packets that need to be sent, or we are waiting on ACKs, loop
-                while len(packets) > 0 or len(need_ack) > 0 or len(nack_list) > 0:
+                while len(packets) > 0 or not need_ack.empty() or not nack_list.empty():
                     #If room in window, send a packet
-                    if len(need_ack) < win_size:
+                    if need_ack.qsize() < self.win_size:
                         if time.time() < timestamp + 0.020:
                             continue #Pass if not enough time has elapsed (0.020 seconds b/w packets)
+                        if len(packets) == 0:
+                            continue
                         to_send = packets.pop(0)
                         need_ack.put(to_send)
-                        sent = self._send(to_send.encode())
+                        sent = self._send(to_send)
                         timestamp = time.time() #Update timestamp of last-sent packet
                         if not sent: #Packet failed to send
                             return False
                     #Check NACKed packets, resend them (Re-add to packets list).
-                    if len(nack_list > 0):
-                        for nacked in nack_list:
+                    if not nack_list.empty():
+                        #Get packets in queue
+                        q_list = list()
+                        while not nack_list.empty():
+                            q_list.append(nack_list.get())
+                        for item in q_list:
+                            nack_list.put(item)
+                        for nacked in q_list:
                             packets.append(nacked) #Resend all NACKed packets
                 #All packets should be sent and ACKed by now.
                 return True
             except socket.error as e:
+                print("Socket error")
                 return False
             except Exception as e:
+                print("Other exception")
                 return False
 
     def _send(self, packet):
@@ -434,14 +444,17 @@ class Connection(object):
         data = [chk[0] for chk in chunks]
         pkt = b''.join(data)
         pkt_object = _Packet(pkt)
-        checksum_match = self._validate(pkt_object)
-        if not checksum_match: #Bad packet. Send NACK
-            self._nack(pkt_object)
-            print("bad packet")
-            return None
-        self._ack(pkt_object)
         if not pkt_object:
             print("Packet is none")
+            return None
+        checksum_match = self._validate(pkt_object)
+        if not checksum_match: #Bad packet. Send NACK
+            if pkt_object.flg & (ACK | NACK) == 0: 
+                self._nack(pkt_object)
+            print("bad packet")
+            return None
+        if pkt_object.flg & (ACK | NACK) == 0:
+            self._ack(pkt_object)
         return pkt_object
 
     def _ack(self, packet):
@@ -456,6 +469,7 @@ class Connection(object):
         ack = self._packetize(ACK)[0]
         ack.seq = packet.seq
         self._send(ack)
+        print("Sent ACK")
 
     def _nack(self, packet):
         """
@@ -467,6 +481,7 @@ class Connection(object):
         nack = self._packetize(NACK)[0]
         nack.seq = packet.seq
         self._send(nack)
+        print("Sent NACK")
 
     def _checksum(self, packet):
         """
@@ -582,20 +597,32 @@ class _Ack_Listener(threading.Thread):
         self.mutex = mutex
 
     def run(self):
-        while num_pkts[0] > 0: #If ==0, we know we've ACKed all packets
-            pkt_object = conn._recv() #Grab a packet
+        while self.num_pkts[0] > 0: #If ==0, we know we've ACKed all packets
+            pkt_object = self.conn._recv() #Grab a packet
             if pkt_object == None:
                 continue #No packet, or corrupt.
             if pkt_object.flg == ACK: #Got ACK
-                for pakt in need_ack:
+                #Get packets in queue
+                q_list = list()
+                while not self.ack_list.empty():
+                    q_list.append(self.ack_list.get())
+                for item in q_list:
+                    self.ack_list.put(item)
+                for pakt in q_list:
                     if pakt.seq == pkt_object.seq:
-                        need_ack.get(pakt) #Remove packet from ACK list
+                        self.ack_list.get(pakt) #Remove packet from ACK list
                         with self.mutex:
-                            num_pkts[0] -= 1 #Decrement num_pkts
+                            self.num_pkts[0] -= 1 #Decrement num_pkts
             elif pkt_object.flg == NACK:
-                for pakt in need_ack:
+                #Get packets in queue
+                q_list = list()
+                while not self.ack_list.empty():
+                    q_list.append(self.ack_list.get())
+                for item in q_list:
+                    self.ack_list.put(item)
+                for pakt in q_list:
                     if pakt.seq == pkt_object.seq:
-                        nack_list.put(pakt) #Got NACK
+                        self.nack_list.put(pakt) #Got NACK
 
 
 class _Packet(object):
