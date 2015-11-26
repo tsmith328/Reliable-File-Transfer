@@ -449,7 +449,7 @@ class Connection(object):
             return None
         checksum_match = self._validate(pkt_object)
         if not checksum_match: #Bad packet. Send NACK
-            if pkt_object.flg & (ACK | NACK) == 0: 
+            if pkt_object.flg & (ACK | NACK) == 0:
                 self._nack(pkt_object)
             print("bad packet")
             return None

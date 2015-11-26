@@ -1,5 +1,6 @@
 import argparse
-from FxAconnections import *
+from FxAconnections import Command_Parser
+# from FxAconnectionsTCP import Command_Parser
 import socket
 
 def argparser():
@@ -17,6 +18,9 @@ def main():
     args = argparser()
     # try:
         # socket.inet_aton(args.A)
+    # s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # s.settimeout(1)
+    # parser = Command_Parser(args.X, args.A, args.P, 0, s)
     parser = Command_Parser(args.X, args.A, args.P)
     running = True
     while running:
