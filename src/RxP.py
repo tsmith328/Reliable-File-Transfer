@@ -149,7 +149,6 @@ class Connection(object):
             eq_addr = False
             corr_pkt = False
             if count == MAX_RETRIES:
-                print("socket timeout")
                 raise socket.timeout #Reset connection
             try:
                 syn_ack_data = self._recv()
@@ -159,7 +158,6 @@ class Connection(object):
                 if pkt_type == syn_ack_data.flg:
                     corr_pkt = True
                 else:
-                    print("Socket timeout")
                     raise socket.timeout #Reset connection
             except socket.timeout:
                 self._send(self._packetize(RST)[0]) #send reset and kill
