@@ -140,6 +140,7 @@ class Connection(object):
         #Send SYN packet
         syn = self._packetize(SYN)
         self._send(syn[0])
+        self._recv() #Eat ACK
         pkt_type = SYN | ACK | DATA
         eq_addr = False
         corr_pkt = False
@@ -160,12 +161,14 @@ class Connection(object):
                 else:
                     raise socket.timeout #Reset connection
             except socket.timeout:
+                print("Bad syn,ack,data")
                 self._send(self._packetize(RST)[0]) #send reset and kill
                 return False
         addr_tup = self.sock.getsockname()
-        to_hash = syn_ack_data.payload + bytearray(str(addr_tup[0], 'utf-8')) + bytearray(str(addr_tup[1]), 'utf-8')
-        hashed = _make_hash(to_hash)
+        to_hash = syn_ack_data.payload + bytearray(str(addr_tup[0]), 'utf-8') + bytearray(str(addr_tup[1]), 'utf-8')
+        hashed = self._make_hash(to_hash)
         self._send(self._packetize(SYN | ACK, bytearray(hashed))[0])
+        #self._recv() #Eat (extra) ACK
         count = 0
         while count < MAX_RETRIES:
             try:
@@ -174,10 +177,13 @@ class Connection(object):
                     if success.flg == ACK:
                         return True
                     elif success.flg == NACK:
+                        print("Last-minute nack")
                         return False
                     else:
+                        print("Wrong Packet type")
                         raise socket.timeout
             except socket.timeout:
+                print("Timed out")
                 self._send(self._packetize(RST)[0]) #send reset and kill
                 return False
         self._send(self._packetize(RST)[0])
@@ -195,6 +201,7 @@ class Connection(object):
         pkt_type = SYN | ACK | DATA
         pkt = self._packetize(pkt_type, key)[0]
         self._send(pkt)
+        #self._recv() #Eat ACK
         #Get SynAck packet with hash
         corr_pkt = False
         pkt_type = SYN | ACK
@@ -209,6 +216,7 @@ class Connection(object):
                     serv_hash = _make_hash(to_hash)
                     if serv_hash == syn_ack.payload:
                         self._send(self.packetize(ACK)[0])
+                        #self._recv() #Eat ACK
                         return True
                     else:
                         raise socket.timeout #NACK request
@@ -226,7 +234,7 @@ class Connection(object):
         """
         return os.urandom(256)
 
-    def _make_hash(to_hash):
+    def _make_hash(self, to_hash):
         """
         Generate md5 hash
         Params:
@@ -451,11 +459,11 @@ class Connection(object):
             return None
         checksum_match = self._validate(pkt_object)
         if not checksum_match: #Bad packet. Send NACK
-            if pkt_object.flg & (ACK | NACK) == 0:
+            if pkt_object.flg & ACK == 0 and pkt_object.flg & NACK == 0:
                 self._nack(pkt_object)
             print("bad packet")
             return None
-        if pkt_object.flg & (ACK | NACK) == 0:
+        if pkt_object.flg & ACK == 0 and pkt_object.flg & NACK == 0:
             self._ack(pkt_object)
         print(pkt_object)
         return pkt_object
